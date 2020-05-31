@@ -1,4 +1,4 @@
-# ESP-EvilTwin
+# ESP8266-EvilTwin
 
 Welcome to the project.
 This project is inspired by https://github.com/vk496/linset and https://github.com/SpacehuhnTech/esp8266_deauther
