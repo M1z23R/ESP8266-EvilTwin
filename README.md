@@ -29,10 +29,10 @@ Upload sketch data using the 'ESP8266 Sketch Data Uploader' - https://github.com
 Reset your board
 Find an AP named "M1z23R" - password is: 12341234
 
-Scan your targets
-Select your target (Please be kind and use your own network)
-Press the 'Start deauth' button or don't (it's your choice if you want to be aggressive or not)
-Press the 'Start EvilTwin' - existing AP will be replaced with a fake one (evil twin) named same as your target without a password
-Connect to it
-Enter a password and click confirm. (if AP is on long range it might not accept the correct password)
+Scan your targets.
+Select your target (Please be kind and use your own network).
+Press the 'Start deauth' button or don't (it's your choice if you want to be aggressive or not).
+Press the 'Start EvilTwin' - existing AP will be replaced with a fake one (evil twin) named same as your target without a password.
+Connect to it.
+Enter a password and click confirm. (if AP is on long range it might not accept the correct password).
 And that's it, your 'admin' AP will be back, deauthing will stop on correct password if it was initially started.
