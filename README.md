@@ -8,6 +8,13 @@ Use this tool only on networks that you have permission for.
 I would like to point out that the project is in a very early stage and that compiling isn't possible at the moment due to the fact that I've modified https://github.com/me-no-dev/ESPAsyncWebServer a bit and even SDK.
 I'll write a full tutorial on how to set everything up once I write everything down.
 
+Note: I don't know anything about licenes, copyrights, etc.
+
+Here is a list of libraries I've used:
+
+Deauthing: https://github.com/SpacehuhnTech/esp8266_deauther        // Learned from
+ESPAsyncWebServer: https://github.com/me-no-dev/ESPAsyncWebServer   // Edited and used
+ESP8266 Core: https://github.com/espressif/arduino-esp32            // Edited and used
 
 
 
