@@ -5,7 +5,7 @@ This project is inspired by https://github.com/vk496/linset and https://github.c
 
 Use this tool only on networks that you have permission for.
 
-I would like to point out that the project is in a very early stage and that compiling isn't possible at the moment due to the fact that I've modified https://github.com/me-no-dev/ESPAsyncWebServer a bit and even SDK.  
+I would like to point out that the project is in a very early stage and that compiling isn't possible at the moment due to the fact that I've modified https://github.com/me-no-dev/ESPAsyncWebServer a bit and even.  
 I'll write a full tutorial on how to set everything up once I write everything down.
 
 Note: I don't know anything about licenes, copyrights, etc.  
@@ -40,9 +40,9 @@ And that's it, your 'admin' AP will be back, deauthing will stop on correct pass
 # How to compile (WINDOWS 10 64bit)
 This is step by step what errors I got and what steps I did to make async libs work with 2.0.0 sdk.
 
+```
 Install both sdk 2.0.0 and sdk 2.7.1
 
-```
 Set SDK to 2.0.0
 
 Extract
@@ -53,13 +53,13 @@ Extract
 ERROR 1
 libb64/cencode.h: No such file or directory
 FIX 1
-Copy folder libb64 from extracet (newer sdk) to 
+Copy folder libb64 from extracted (newer sdk) to 
 %UserProfile%\Documents\ArduinoData\packages\esp8266\hardware\esp8266\2.0.0\cores\esp8266
 
 ERROR 2
 class cbuf
 FIX 2
-Rename cbuf.cpp and cbuf.h to cbuf_alt.cpp and cbuf_alt.h from extracet (newer sdk) then copy to
+Rename cbuf.cpp and cbuf.h to cbuf_alt.cpp and cbuf_alt.h from extracted (newer sdk) then copy to
 %UserProfile%\Documents\ArduinoData\packages\esp8266\hardware\esp8266\2.0.0\cores\esp8266
 Edit cbuf_alt.cpp to include cbuf_alt.h instead of cbuf.h
 Replace includes for cbuf with cbuf_alt in AsyncTCP lib:
