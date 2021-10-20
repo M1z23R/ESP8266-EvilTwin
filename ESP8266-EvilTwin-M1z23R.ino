@@ -54,7 +54,7 @@ void performScan() {
   int n = WiFi.scanNetworks();
   clearArray();
   if (n >= 0) {
-    for (int i = 0; i < n; ++i) {
+    for (int i = 0; i < n && i < 16; ++i) {
       _Network network;
       network.ssid = WiFi.SSID(i);
       for (int j = 0; j < 6; j++) {
